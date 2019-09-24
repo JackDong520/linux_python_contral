@@ -1,3 +1,5 @@
+import redis
+
 if __name__ == '__main__':
     #   s = ['1', '2']
     # sta = "12345"
@@ -15,7 +17,15 @@ if __name__ == '__main__':
     # for content in contents:
     #     print(content)
 
-    b = 'hello world'
-    tmp_b = '\n'.join(b)
-    print(tmp_b)
+    # b = 'hello world'
+    # tmp_b = '\n'.join(b)
+    # print(tmp_b)
 
+    # dict = {'runoob': 'runoob.com', 'google': 'google.com'}
+    # print(dict)
+    # print(repr(dict))
+
+
+    re = redis.Redis(host='127.0.0.1', port=6379, password=None)
+    re.set('key_name', 'value_tom')
+    print(re.get('key_name'))
