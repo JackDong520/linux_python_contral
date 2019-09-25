@@ -1,3 +1,4 @@
+import hashlib
 import re
 
 
@@ -21,3 +22,9 @@ def is_url_format(value):
         return True
     else:
         return False
+
+def get_md5(value):
+    if isinstance(value, str):
+        value = value.encode(encoding='UTF-8')
+    return hashlib.md5(value).hexdigest()
+

@@ -1,7 +1,9 @@
 # 分发调度引擎
 import os
+import random
 import socket
 import threading
+from concurrent import futures
 from queue import Queue
 
 import time
@@ -15,7 +17,7 @@ from config import NUM_CACHE_IP, MASSCAN_DEFAULT_PORT, MASSCAN_FULL_SCAN, IS_STA
 
 from lib.common import is_ip_address_format, is_url_format
 from lib.data import PATHS, collector
-from lib.loader import load_remote_poc
+from lib.loader import load_remote_poc, load_string_to_moudle
 from lib.redis_ import task_update
 from plugins import crossdomain
 from plugins import directory_browse
@@ -134,7 +136,7 @@ class Schedular:
                 {"port": port, "name": name, "product": product, "version": version, "extrainfo": extrainfo})
             return result2
 
-    def hand_ip(self, serviceTypes, option='masscan'):
+    def hand_ip(self, serviceTypes, option=+'masscan'):
         ip_list = []
 
         for item in serviceTypes:
@@ -256,10 +258,76 @@ class Schedular:
             collector.add_domain_info(target, temp)
 
         if temp.get("app"):
-            keywords =temp["app"]
+            keywords = temp["app"]
             # 远程读取插件
             pocs = load_remote_poc()
 
             for poc in pocs:
                 for keyword in keywords:
+                    webfile = poc["webfile"]
+                    # logger.debug("load {0} poc:{1} poc_time:{2}".format(poc["type"], webfile, poc["time"]))
 
+                    # 加载插件 加载远程文件目录 将其转换成实体
+
+                    code = requests.get(webfile).text
+                    obj = load_string_to_moudle(code, webfile)
+                    # 在模块对象列表中加入远程模块
+                    _pocs.append(obj)
+        # 并发执行插件
+        if _pocs:
+            executor = futures.ThreadPoolExecutor(len(_pocs))
+            fs = []
+            for f in _pocs:
+                taks = executor.submit(f.poc, target)
+                # 这儿返回的是啥子鸡巴啊  每个线程的控制类？
+                fs.append(taks)
+            for f in futures.as_completed(fs):
+                try:
+                    res = f.result()
+                except Exception as e:
+                    res = None
+                    # logger.error("load poc error:{} error:{}".format(target, str(e)))
+                if res:
+                    name = res.get("name") or "scan_" + str(time.time())
+                    collector.add_domain_bug(target, {name: res})
+        # 通过异步调用插件得到返回结果，并且通过collector返送结果
+        collector.send_ok(target)
+
+    def run(self):
+        while 1:
+            # 对剩余未处理的域名进行处理
+            if self.cache_domains:
+                self.lock.acquire()
+                service_types = self.cache_domains
+                self.cache_domains = []
+                self.lock.release()
+
+                for serviceType in service_types:
+                    task_update("running", 1)
+                    try:
+                        self.hand_domain(serviceType)
+                    except Exception as e:
+                        # logger.error(repr(sys.exc_info()))
+                        pass
+                    task_update("running", -1)
+
+            # 对剩余未处理的ip进行处理
+            if self.cache_ips:
+                self.lock.acquire()
+                service_types = self.cache_ips
+                self.cache_ips = []
+                self.lock.release()
+
+                task_update("running", 1)
+
+                try:
+                    self.hand_ip(service_types)
+                except Exception as e:
+                    # logger.error(repr(sys.exc_info()))
+                    pass
+                task_update("runnning", -1)
+
+            # 最后一次提交
+            collector.submit()
+            task_update("tasks", self.queue.qsize() + self.ip_queue.qsize())
+            time.sleep(random.randint(2, 10))
