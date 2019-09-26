@@ -57,7 +57,9 @@ def poc(target):
 
 def read_config():
     mark_list = []
+    print(os.path.join(PATHS.DATA_PATH, "webeye.txt"))
     config_file = open(os.path.join(PATHS.DATA_PATH, "webeye.txt"), 'r')
+
     for mark in config_file:
         # remove comment, group, blank line
         if re.match("\[.*?\]|^;", mark) or not mark.split():

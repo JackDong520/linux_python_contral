@@ -7,7 +7,7 @@ import os
 import time
 
 from config import MASSCAN_RATE
-from lib.data import PATHS, logger
+from lib.data import PATHS
 
 
 def masscan(target, ports):

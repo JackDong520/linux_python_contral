@@ -4,6 +4,7 @@ import random
 import socket
 import threading
 from concurrent import futures
+from concurrent.futures import thread
 from queue import Queue
 
 import time
@@ -12,19 +13,21 @@ import _thread
 from urllib.parse import urlparse
 
 import requests
+import sys
 
-from config import NUM_CACHE_IP, MASSCAN_DEFAULT_PORT, MASSCAN_FULL_SCAN, IS_START_PLUGINS
+from config import NUM_CACHE_IP, MASSCAN_DEFAULT_PORT, MASSCAN_FULL_SCAN, IS_START_PLUGINS, THREAD_NUM, NUM_CACHE_DOMAIN
 
 from lib.common import is_ip_address_format, is_url_format
-from lib.data import PATHS, collector
+from lib.data import PATHS, collector, logger
 from lib.loader import load_remote_poc, load_string_to_moudle
 from lib.redis_ import task_update
+
 from plugins import crossdomain
-from plugins import directory_browse
+
 from plugins import gitleak
 from plugins import iis_parse
 from plugins import ip_location
-from plugins import password_found
+
 from plugins import phpinfo
 from plugins import svnleak
 from plugins import tomcat_leak
@@ -34,6 +37,7 @@ from plugins import webtitle
 from plugins import whatcms
 from plugins.masscan import masscan
 from plugins.nmap import nmapscan
+from thirdpart.requests import patch_all
 
 
 class Schedular:
@@ -70,6 +74,7 @@ class Schedular:
         # 到底是怎么更新的啊
 
     def receive_ip(self):
+
         while 1:
             struct = self.ip_queue.get()
             serviceType = struct.get("serviceType", "other")
@@ -92,20 +97,63 @@ class Schedular:
                     self.hand_ip(serviceTypes)
                 except Exception as e:
                     continue
-                # logger.error("hand ip error:{}".format(repr(e)))
-                # logger.error(repr(sys.exc_info()))
+                logger.error("hand ip error:{}".format(repr(e)))
+                logger.error(repr(sys.exc_info()))
                 task_update("running", -1)
             self.ip_queue.task_done()
             task_update("tasks", self.queue.qsize() + self.ip_queue.qsize())
 
     def receive(self):
+
         while 1:
-            struct = self.queue.get()
+
+            try:
+                struct = self.queue.get(timeout=1)
+            except Exception as e:
+                continue
+
+            task_update("tasks", self.queue.qsize() + self.ip_queue.qsize())
+
+            serviceType = struct.get("serviceType", "other")
+            if serviceType == "other":
+                msg = "not matches targets:{}".format(repr(struct))
+                logger.error(msg)
+                self.queue.task_done()
+                continue
+
+            elif serviceType == "domain":
+                flag = False
+                self.lock.acquire()
+                self.cache_domains.append(struct)
+                num = len(self.cache_domains)
+                if num >= NUM_CACHE_DOMAIN:
+                    flag = True
+                    serviceTypes = self.cache_domains
+                    # 刷新缓存列表
+                    self.cache_domains = []
+                self.lock.release()
+                if not flag:
+                    self.queue.task_done()
+                    continue
+                    # 多线程启动扫描域名
+                for serviceType in serviceTypes:
+                    task_update("running", 1)
+                    try:
+                        self.hand_domain(serviceType)
+                    except Exception as e:
+                        logger.error("hand domain error :{}".format(repr(e)))
+                        logger.error(repr(sys.exc_info()))
+                    task_update("running", -1)
+            self.queue.task_done()
+            task_update("tasks", self.queue.qsize() + self.ip_queue.qsize())
+
 
     def start(self):
+
         for i in range(self.threadNum - 1):
-            _thread.start_new_thread(self.receive(), ())
-        _thread.start_new_thread(self.receive_ip(), ())
+            print(i)
+            _thread.start_new_thread(self.receive, ())
+        _thread.start_new_thread(self.receive_ip, ())
 
     def nmap_result_handle(self, result_nmap: dict, host):
         # 处理nmap插件返回的数据
@@ -136,7 +184,7 @@ class Schedular:
                 {"port": port, "name": name, "product": product, "version": version, "extrainfo": extrainfo})
             return result2
 
-    def hand_ip(self, serviceTypes, option=+'masscan'):
+    def hand_ip(self, serviceTypes, option='masscan'):
         ip_list = []
 
         for item in serviceTypes:
@@ -149,11 +197,11 @@ class Schedular:
             target = os.path.join(PATHS.OUTPUT_PATH, "target_{0}.log".format(time.time()))
             with open(target, "w+") as fp:
                 fp.write('\n'.join(ip_list))
-            # logger.debug("ip:" + repr(ip_list))
+            logger.debug("ip:" + repr(ip_list))
             try:
                 result = masscan(target, ports)
             except Exception as e:
-                # logger.error("masscan error msg:{}".format(repr(e)))
+                logger.error("masscan error msg:{}".format(repr(e)))
                 result = None
             if result is None:
                 return None
@@ -174,7 +222,7 @@ class Schedular:
                 tmp_r = self.nmap_result_handle(result_nmap, host=host)
                 result2.update(tmp_r)
         elif option == "nmap":
-            # logger.debug("ip:" + repr(ip_list))
+            logger.debug("ip:" + repr(ip_list))
             for host in ip_list:
                 result_nmap = nmapscan(host, ports.split(","))
                 tmp_r = self.nmap_result_handle(result_nmap, host=host)
@@ -198,7 +246,7 @@ class Schedular:
 
     def hand_domain(self, serviceType):
         target = serviceType["target"]
-        # logger.info(target)
+        logger.info(target)
         # 添加这条记录
         collector.add_domain(target)
         # 发起请求
@@ -207,10 +255,10 @@ class Schedular:
             collector.add_domain_info(target,
                                       {"headers": r.headers, "body": r.text, "status_code": r.status_code})
         except Exception as e:
-            # logger.error("request url error:" + str(e))
+            logger.error("request url error:" + str(e))
             collector.del_domain(target)
             return
-        # logger.debug("target:{} over,start to scan".format(target))
+        logger.debug("target:{} over,start to scan".format(target))
 
         # Get hostname
         # ???????????WDNMD
@@ -225,26 +273,30 @@ class Schedular:
         else:
             collector.add_domain_info(target, {"ip": hostname})
         # 需要启动那些poc进行目标信息扫描
-        work_list = [webeye.poc, webtitle.poc, wappalyzer.poc, password_found.poc]
+        work_list = [webeye.poc, webtitle.poc, wappalyzer.poc]
+        # password_found.poc
 
         if IS_START_PLUGINS:
+            pass
             work_list.append(crossdomain.poc)
-            work_list.append(directory_browse.poc)
+            # work_list.append(directory_browse.poc)
             work_list.append(gitleak.poc)
             work_list.append(iis_parse.poc)
             work_list.append(phpinfo.poc)
             work_list.append(svnleak.poc)
             work_list.append(tomcat_leak.poc)
-            work_list.append(whatcms.poc)
+            # work_list.append(whatcms.poc)
 
         # 信息直接从函数的内部利用collector进行存储
+
         for func in work_list:
             try:
                 func(target)
             except Exception as e:
-                # logger.error("domain plugin threading error {}:{}".format(repr(Exception), str(e)))
+                logger.error("domain plugin threading error {}:{}".format(repr(Exception), str(e)))
                 pass
-        # logger.debug("target:{} End of scan".format(target))
+        logger.debug("target:{} End of scan".format(target))
+        collector.print_domains()
         infos = collector.get_domain(target)
         _pocs = []
         temp = {}
@@ -265,7 +317,7 @@ class Schedular:
             for poc in pocs:
                 for keyword in keywords:
                     webfile = poc["webfile"]
-                    # logger.debug("load {0} poc:{1} poc_time:{2}".format(poc["type"], webfile, poc["time"]))
+                    logger.debug("load {0} poc:{1} poc_time:{2}".format(poc["type"], webfile, poc["time"]))
 
                     # 加载插件 加载远程文件目录 将其转换成实体
 
@@ -286,12 +338,14 @@ class Schedular:
                     res = f.result()
                 except Exception as e:
                     res = None
-                    # logger.error("load poc error:{} error:{}".format(target, str(e)))
+                    logger.error("load poc error:{} error:{}".format(target, str(e)))
                 if res:
                     name = res.get("name") or "scan_" + str(time.time())
                     collector.add_domain_bug(target, {name: res})
         # 通过异步调用插件得到返回结果，并且通过collector返送结果
         collector.send_ok(target)
+        print("print collector")
+        print(collector.collect_domains)
 
     def run(self):
         while 1:
@@ -307,7 +361,7 @@ class Schedular:
                     try:
                         self.hand_domain(serviceType)
                     except Exception as e:
-                        # logger.error(repr(sys.exc_info()))
+                        logger.error(repr(sys.exc_info()))
                         pass
                     task_update("running", -1)
 
@@ -323,7 +377,7 @@ class Schedular:
                 try:
                     self.hand_ip(service_types)
                 except Exception as e:
-                    # logger.error(repr(sys.exc_info()))
+                    logger.error(repr(sys.exc_info()))
                     pass
                 task_update("runnning", -1)
 

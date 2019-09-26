@@ -45,7 +45,6 @@ def load_remote_poc():
 
 def load_string_to_moudle(code_string, fullname=None):
     """
-
     :param code_string:代码数据？
     :param fullname: 文件名？
     :return:

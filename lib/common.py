@@ -23,8 +23,13 @@ def is_url_format(value):
     else:
         return False
 
+
 def get_md5(value):
     if isinstance(value, str):
         value = value.encode(encoding='UTF-8')
     return hashlib.md5(value).hexdigest()
 
+
+if __name__ == '__main__':
+    ret = is_url_format("www.baidu.com")
+    print(ret)

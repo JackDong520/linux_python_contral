@@ -8,7 +8,7 @@ from functools import reduce
 
 import requests
 import json
-from lib.data import logger, PATHS
+from lib.data import  PATHS
 import geoip2.database
 
 
@@ -17,7 +17,7 @@ def taobao_api(arg):
     try:
         r = requests.get(api)
     except Exception as e:
-        logger.error("ip_location request faild:" + str(e))
+        #logger.error("ip_location request faild:" + str(e))
         return False
     if r.status_code != 200:
         return False

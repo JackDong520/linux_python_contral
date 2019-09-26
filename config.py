@@ -7,7 +7,7 @@
 # 程序运行的线程数
 import os
 
-THREAD_NUM = 25
+THREAD_NUM = 2
 DEBUG = False
 # LOGGER_LEVEL = 1 if DEBUG else 2
 LOGGER_LEVEL = 1
@@ -26,7 +26,7 @@ MASSCAN_DEFAULT_PORT = "21,22,23,80-90,161,389,443,445,873,1099,1433,1521,1900,2
 MASSCAN_FULL_SCAN = False  # 是否扫描全端口
 
 # WEB Restful接口地址
-WEB_INTERFACE = os.environ.get("WEB_INTERFACE", default="http://127.0.0.1:8000/")
+WEB_INTERFACE = os.environ.get("WEB_INTERFACE", default="http://10.59.13.137:8080/")
 WEB_INTERFACE_KEY = "hello-w12scan!"
 
 # WEB POCS repository 提供指纹识别对应的poc仓库

@@ -21,6 +21,11 @@ class Collector:
         # ip cache 缓存队列
         self.cache_ips = queue.Queue()
 
+    def print_domains(self):
+        self.collect_lock.acquire()
+        print(self.collect_domains)
+        self.collect_lock.release()
+
     def add_domain(self, domain):
         self.collect_lock.acquire()
         if domain not in self.collect_domains:  # 如果该域名之前没有创建，创建一个新的集合装数据
@@ -164,7 +169,7 @@ class Collector:
 
 if __name__ == '__main__':
     c = Collector()
-    c.add_domain("test.com")
+    c.add_domain(".com")
     c.add_domain_info("test.com", {"xx": "11"})
     c.send_ok("test.com")
     c.submit()
